@@ -13,7 +13,7 @@ option(USE_V8_INSPECTOR "include the v8 inspector in the v8core library" OFF)
 
 if(${USE_V8_INSPECTOR} OR TRUE)
 
-    add_subdirectory(deps/v8Inspector)
+    add_dependencies(v8Core v8Inspector)
 
     target_link_libraries(v8Core PUBLIC v8Inspector)
 

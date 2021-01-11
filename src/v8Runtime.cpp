@@ -35,8 +35,10 @@ std::shared_ptr<v8::Platform> v8Runtime::initV8() {
     return platform;
 }
 
-v8Runtime::v8Runtime(std::shared_ptr<v8::Platform> platform) {
-    this->platform = platform;
+v8Runtime::v8Runtime(std::shared_ptr<v8::Platform> platform,
+                     std::function<void(v8Runtime *)> set_context_globals) {
+    this->platform = std::move(platform);
+    this->set_context_globals = std::move(set_context_globals);
     v8::Isolate::CreateParams create_params;
     create_params.array_buffer_allocator = v8::ArrayBuffer::Allocator::NewDefaultAllocator();
     isolate = v8::Isolate::New(create_params);
@@ -47,6 +49,11 @@ v8Runtime::v8Runtime(std::shared_ptr<v8::Platform> platform) {
 #if USE_V8_INSPECTOR
     inspector = std::make_unique<Inspector>(isolate, &base_context, [=](){return pump_message_loop();});
 #endif
+}
+
+
+v8Runtime::~v8Runtime() {
+    isolate->Dispose();
 }
 
 
@@ -105,15 +112,11 @@ bool v8Runtime::pump_message_loop() {
     return v8::platform::PumpMessageLoop(platform.get(), isolate);
 }
 
-void v8Runtime::dispose() {
-    isolate->Dispose();
-}
-
-
 void v8Runtime::reset_global_context() {
     auto context = v8::Context::New(isolate);
     v8::Context::Scope context_scope(context);
     base_context.Reset(isolate, context);
+    set_context_globals(this);
 #if USE_V8_INSPECTOR
     if(inspector) inspector->set_context(&base_context);
 #endif
@@ -141,4 +144,5 @@ bool v8Runtime::paused() const {
     if(inspector) return inspector->paused();
     else return false;
 }
+
 #endif

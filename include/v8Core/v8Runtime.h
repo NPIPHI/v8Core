@@ -16,7 +16,15 @@
 
 class v8Runtime {
 public:
-    v8Runtime(std::shared_ptr<v8::Platform> platform);
+    /*
+     * set_context_globals is called during construction and every time the context is reset
+     * when it is called, locks are guaranteed to be set
+     * use set_context_globals to set builtin functions like setTimeout or performance.now()
+     */
+    v8Runtime(std::shared_ptr<v8::Platform> platform,
+              std::function<void(v8Runtime *)> set_context_globals = [](auto){});
+
+    ~v8Runtime();
 
     /*
      * initializes v8
@@ -29,11 +37,6 @@ public:
      * this method acquires the necessary locks
      */
     void run_tasks_loop();
-
-    /*
-     * disposes the current isolate
-     */
-    void dispose();
 
     /*
      * runs a single task in the event loop
@@ -100,6 +103,7 @@ public:
     v8::Isolate* isolate;
 
 private:
+    std::function<void(v8Runtime*)> set_context_globals;
     v8::Persistent<v8::Context> base_context;
     std::mutex mut;
 
