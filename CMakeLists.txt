@@ -2,16 +2,25 @@ cmake_minimum_required(VERSION 3.4.1)
 
 project(v8Core)
 
-add_subdirectory(deps)
-
 add_library(v8Core STATIC
         include/v8Core/v8Runtime.h
-        src/FileManager.cpp src/FileManager.h
         src/v8Runtime.cpp
         src/log.h
         )
 
-target_link_libraries(v8Core PUBLIC v8Inspector)
+
+option(USE_V8_INSPECTOR "include the v8 inspector in the v8core library" OFF)
+
+if(${USE_V8_INSPECTOR} OR TRUE)
+
+    add_subdirectory(deps/v8Inspector)
+
+    target_link_libraries(v8Core PUBLIC v8Inspector)
+
+    add_definitions(-DUSE_V8_INSPECTOR=true)
+
+endif()
+
 
 if(DEFINED V8_INCLUDE_DIR)
     target_include_directories(v8Core PUBLIC ${V8_INCLUDE_DIR})

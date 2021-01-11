@@ -9,7 +9,10 @@
 #include<libplatform/libplatform.h>
 #include<mutex>
 #include<functional>
+
+#if USE_V8_INSPECTOR
 #include<v8Inspector/Inspector.h>
+#endif
 
 class v8Runtime {
 public:
@@ -28,12 +31,6 @@ public:
     void run_tasks_loop();
 
     /*
-     * the inspector checks for queued messages and executes them
-     * this method acquires the necessary locks
-     */
-    void run_inspector();
-
-    /*
      * disposes the current isolate
      */
     void dispose();
@@ -49,12 +46,6 @@ public:
      * this does not delete the old context, it will be garbage collected when there are no more references
      */
     void reset_global_context();
-
-    /*
-     * returns weather the runtime is paused from hitting a breakpoint in the inspector
-     * if the inspector is not attached this method always returns false
-     */
-    [[nodiscard]] bool paused() const;
 
     /*
      * returns the current "global" context
@@ -85,24 +76,36 @@ public:
      */
     void add_script(std::string script_text, std::string file_name);
 
+#if USE_V8_INSPECTOR
     /*
-     * attaches an inspector to the current global context
-     * any files added before attaching the inspector will not appear in the debugger
+     * the inspector checks for queued messages and executes them
+     * this method acquires the necessary locks
      */
-    void attach_inspector();
+    void run_inspector();
 
     /*
      * starts the inspector on the port specified
      */
     void start_inspector(int port);
 
+     /*
+     * returns weather the runtime is paused from hitting a breakpoint in the inspector
+     * if the inspector is not attached this method always returns false
+     */
+    [[nodiscard]] bool paused() const;
+
+#endif
+
     std::shared_ptr<v8::Platform> platform;
     v8::Isolate* isolate;
 
 private:
     v8::Persistent<v8::Context> base_context;
-    std::unique_ptr<Inspector> inspector;
     std::mutex mut;
+
+#if USE_V8_INSPECTOR
+    std::unique_ptr<Inspector> inspector;
+#endif
 };
 
 

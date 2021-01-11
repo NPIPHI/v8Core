@@ -44,6 +44,9 @@ v8Runtime::v8Runtime(std::shared_ptr<v8::Platform> platform) {
     v8::Isolate::Scope isolate_scope(isolate);
     v8::HandleScope scope(isolate);
     reset_global_context();
+#if USE_V8_INSPECTOR
+    inspector = std::make_unique<Inspector>(isolate, &base_context, [=](){return pump_message_loop();});
+#endif
 }
 
 
@@ -59,16 +62,6 @@ void v8Runtime::run_tasks_loop() {
     while(v8::platform::PumpMessageLoop(platform.get(), isolate)) {}
 }
 
-void v8Runtime::run_inspector() {
-    if(inspector){
-        auto lock = get_lock();
-        v8::Locker locker(isolate);
-        v8::Isolate::Scope isolate_scope(isolate);
-        v8::HandleScope scope(isolate);
-        inspector->poll_messages();
-    }
-}
-
 void v8Runtime::post_task(std::function<void()> && func) {
     platform->GetForegroundTaskRunner(isolate)->PostNonNestableTask(std::make_unique<funcTask>(std::move(func)));
 }
@@ -79,14 +72,6 @@ void v8Runtime::post_task_delayed(std::function<void()> && func, int delay_in_mi
 
 v8::Persistent<v8::Context> * v8Runtime::context() {
     return &base_context;
-}
-
-void v8Runtime::attach_inspector() {
-    inspector = std::make_unique<Inspector>(isolate, &base_context, [=](){return pump_message_loop();});
-}
-
-void v8Runtime::start_inspector(int port) {
-    inspector->start_agent(port);
 }
 
 void v8Runtime::add_script(std::string script_text, std::string file_name) {
@@ -124,14 +109,36 @@ void v8Runtime::dispose() {
     isolate->Dispose();
 }
 
-bool v8Runtime::paused() const {
-    if(inspector) return inspector->paused();
-    else return false;
-}
 
 void v8Runtime::reset_global_context() {
     auto context = v8::Context::New(isolate);
     v8::Context::Scope context_scope(context);
     base_context.Reset(isolate, context);
+#if USE_V8_INSPECTOR
     if(inspector) inspector->set_context(&base_context);
+#endif
 }
+
+#if USE_V8_INSPECTOR
+
+void v8Runtime::start_inspector(int port) {
+    inspector->start_agent(port);
+}
+
+
+void v8Runtime::run_inspector() {
+    if(inspector){
+        auto lock = get_lock();
+        v8::Locker locker(isolate);
+        v8::Isolate::Scope isolate_scope(isolate);
+        v8::HandleScope scope(isolate);
+        inspector->poll_messages();
+    }
+}
+
+
+bool v8Runtime::paused() const {
+    if(inspector) return inspector->paused();
+    else return false;
+}
+#endif
