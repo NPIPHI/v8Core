@@ -1,0 +1,3 @@
+[submodule "deps/v8Inspector"]
+	path = deps/v8Inspector
+	url = https://github.com/NPIPHI/v8Inspector
