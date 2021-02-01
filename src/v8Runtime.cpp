@@ -41,81 +41,89 @@ v8Runtime::v8Runtime(std::shared_ptr<v8::Platform> platform,
     this->set_context_globals = std::move(set_context_globals);
     v8::Isolate::CreateParams create_params;
     create_params.array_buffer_allocator = v8::ArrayBuffer::Allocator::NewDefaultAllocator();
-    isolate = v8::Isolate::New(create_params);
-    v8::Locker locker(isolate);
-    v8::Isolate::Scope isolate_scope(isolate);
-    v8::HandleScope scope(isolate);
+    _isolate = v8::Isolate::New(create_params);
+    v8::Locker locker(_isolate);
+    v8::Isolate::Scope isolate_scope(_isolate);
+    v8::HandleScope scope(_isolate);
     reset_global_context();
 #if USE_V8_INSPECTOR
-    inspector = std::make_unique<Inspector>(isolate, &base_context, [=](){return pump_message_loop();});
+    inspector = std::make_unique<Inspector>(_isolate, &base_context, [=](){return pump_message_loop();});
 #endif
 }
 
 
 v8Runtime::~v8Runtime() {
-    isolate->Dispose();
-}
-
-
-std::lock_guard<std::mutex> v8Runtime::get_lock() {
-    return std::lock_guard(mut);
+    _isolate->Dispose();
 }
 
 void v8Runtime::run_tasks_loop() {
-    auto lock = get_lock();
-    v8::Locker locker(isolate);
-    v8::Isolate::Scope isolate_scope(isolate);
-    v8::HandleScope scope(isolate);
-    while(v8::platform::PumpMessageLoop(platform.get(), isolate)) {}
+    v8::Locker locker(_isolate);
+    v8::Isolate::Scope isolate_scope(_isolate);
+    v8::HandleScope handle_scope(_isolate);
+    while(v8::platform::PumpMessageLoop(platform.get(), _isolate)) {}
 }
 
 void v8Runtime::post_task(std::function<void()> && func) {
-    platform->GetForegroundTaskRunner(isolate)->PostNonNestableTask(std::make_unique<funcTask>(std::move(func)));
+    platform->GetForegroundTaskRunner(_isolate)->PostTask(std::make_unique<funcTask>(std::move(func)));
 }
 
 void v8Runtime::post_task_delayed(std::function<void()> && func, int delay_in_milliseconds) {
-    platform->GetForegroundTaskRunner(isolate)->PostNonNestableDelayedTask(std::make_unique<funcTask>(std::move(func)), double(delay_in_milliseconds)/1000);
-}
-
-v8::Persistent<v8::Context> * v8Runtime::context() {
-    return &base_context;
+    platform->GetForegroundTaskRunner(_isolate)->PostDelayedTask(std::make_unique<funcTask>(std::move(func)), double(delay_in_milliseconds)/1000);
 }
 
 void v8Runtime::add_script(std::string script_text, std::string file_name) {
     post_task([=](){
-            v8::ScriptOrigin scriptOrigin = v8::ScriptOrigin(
-                v8::String::NewFromUtf8(
-                        isolate,
-                        ("file://" + file_name).c_str(),
-                        v8::NewStringType::kNormal
-                ).ToLocalChecked()
-            );
-            auto local_context = base_context.Get(isolate);
-            v8::Context::Scope scope(local_context);
-            auto source = v8::String::NewFromUtf8(isolate, script_text.data()).ToLocalChecked();
-            auto maybe_script = v8::Script::Compile(local_context, source, file_name.empty() ? nullptr : &scriptOrigin);
-            if(maybe_script.IsEmpty()){
-                LOG_E("Could not compile the script with filename: %s", file_name.c_str());
-            } else {
-                auto script = maybe_script.ToLocalChecked();
-                v8::TryCatch try_catch(isolate);
-                auto result = script->Run(local_context);
-                if(try_catch.HasCaught()){
-                    LOG_E("Could not execut script: %s", file_name.c_str());
-                    LOG_E("Exception: %s", getExceptionMessage(local_context, try_catch.Exception()).c_str());
-                }
-            }
+        execute_script(script_text, file_name);
     });
 }
 
+void v8Runtime::execute_script(std::string_view script_text, std::string_view file_name) {
+    v8::Locker locker(_isolate);
+    v8::Isolate::Scope isolate_scope(_isolate);
+    v8::HandleScope handle_scope(_isolate);
+
+    v8::ScriptOrigin scriptOrigin = v8::ScriptOrigin(
+            v8::String::NewFromUtf8(
+                    _isolate,
+                    file_name.data(),
+                    v8::NewStringType::kNormal
+            ).ToLocalChecked()
+    );
+
+    auto local_context = base_context.Get(_isolate);
+    v8::Context::Scope scope(local_context);
+    auto source = v8::String::NewFromUtf8(_isolate, script_text.data(), v8::NewStringType::kNormal, script_text.size()).ToLocalChecked();
+    auto maybe_script = v8::Script::Compile(local_context, source, file_name.empty() ? nullptr : &scriptOrigin);
+
+    if(maybe_script.IsEmpty()){
+        LOG_E("Could not compile the script with filename: %s", file_name.data());
+    } else {
+        auto script = maybe_script.ToLocalChecked();
+        v8::TryCatch try_catch(_isolate);
+        (void)script->Run(local_context);
+        if(try_catch.HasCaught()){
+            LOG_E("Could not execut script: %s", file_name.data());
+            LOG_E("Exception: %s", getExceptionMessage(local_context, try_catch.Exception()).c_str());
+        }
+    }
+}
+
 bool v8Runtime::pump_message_loop() {
-    return v8::platform::PumpMessageLoop(platform.get(), isolate);
+    v8::Locker locker(_isolate);
+    v8::Isolate::Scope is(_isolate);
+    v8::HandleScope hs(_isolate);
+
+    return v8::platform::PumpMessageLoop(platform.get(), _isolate);
 }
 
 void v8Runtime::reset_global_context() {
-    auto context = v8::Context::New(isolate);
+    v8::Locker locker(_isolate);
+    v8::Isolate::Scope is(_isolate);
+    v8::HandleScope hs(_isolate);
+
+    auto context = v8::Context::New(_isolate);
     v8::Context::Scope context_scope(context);
-    base_context.Reset(isolate, context);
+    base_context.Reset(_isolate, context);
     set_context_globals(this);
 #if USE_V8_INSPECTOR
     if(inspector) inspector->set_context(&base_context);
@@ -131,10 +139,9 @@ void v8Runtime::start_inspector(int port) {
 
 void v8Runtime::run_inspector() {
     if(inspector){
-        auto lock = get_lock();
-        v8::Locker locker(isolate);
-        v8::Isolate::Scope isolate_scope(isolate);
-        v8::HandleScope scope(isolate);
+        v8::Locker locker(_isolate);
+        v8::Isolate::Scope isolate_scope(_isolate);
+        v8::HandleScope scope(_isolate);
         inspector->poll_messages();
     }
 }

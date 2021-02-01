@@ -18,7 +18,6 @@ class v8Runtime {
 public:
     /*
      * set_context_globals is called during construction and every time the context is reset
-     * when it is called, locks are guaranteed to be set
      * use set_context_globals to set builtin functions like setTimeout or performance.now()
      */
     v8Runtime(std::shared_ptr<v8::Platform> platform,
@@ -34,34 +33,37 @@ public:
 
     /*
      * run the event loop until it is empty
-     * this method acquires the necessary locks
      */
     void run_tasks_loop();
 
     /*
      * runs a single task in the event loop
-     * this method does not acquire the necessary locks
      */
     bool pump_message_loop();
 
     /*
      * resets the global context to its starting state
-     * this does not delete the old context, it will be garbage collected when there are no more references
+     * the old context will remain valid until it is garbage collected
      */
     void reset_global_context();
 
     /*
      * returns the current "global" context
      */
-    [[nodiscard]] v8::Persistent<v8::Context> * context();
+    [[nodiscard]] inline v8::Persistent<v8::Context> * context() {
+        return &base_context;
+    };
 
     /*
-     * returns a lock guard on the runtime's mutex
+     * returns the current isolate
      */
-    [[nodiscard]] std::lock_guard<std::mutex> get_lock();
+
+    inline v8::Isolate* isolate() const {
+        return _isolate;
+    };
 
     /*
-     * posts a non nestable task to the event loop
+     * posts a nestable task to the event loop
      * the task will be run in pump_message_loop or run_tasks_loop
      */
     void post_task(std::function<void()> &&func);
@@ -79,10 +81,14 @@ public:
      */
     void add_script(std::string script_text, std::string file_name);
 
+    /*
+     * executes a script synchronously
+     */
+    void execute_script(std::string_view script_text, std::string_view file_name);
+
 #if USE_V8_INSPECTOR
     /*
      * the inspector checks for queued messages and executes them
-     * this method acquires the necessary locks
      */
     void run_inspector();
 
@@ -99,13 +105,11 @@ public:
 
 #endif
 
-    std::shared_ptr<v8::Platform> platform;
-    v8::Isolate* isolate;
-
 private:
     std::function<void(v8Runtime*)> set_context_globals;
     v8::Persistent<v8::Context> base_context;
-    std::mutex mut;
+    v8::Isolate* _isolate;
+    std::shared_ptr<v8::Platform> platform;
 
 #if USE_V8_INSPECTOR
     std::unique_ptr<Inspector> inspector;
